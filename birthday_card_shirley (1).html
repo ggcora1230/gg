@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Birthday Card — Shirley</title>
+<style>
+  *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#090713;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  body{color:#fff}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  .hud{position:fixed;left:50%;top:28px;transform:translateX(-50%);z-index:5;text-align:center;pointer-events:none}
+  .hud h1{margin:0;font-size:14px;letter-spacing:.24em;text-transform:uppercase;font-weight:500;opacity:.82}
+  .hud p{margin:8px 0 0;font-size:12px;opacity:.48;letter-spacing:.08em}
+  .camera{position:fixed;right:22px;bottom:20px;width:190px;height:135px;border:1px solid rgba(255,255,255,.14);border-radius:14px;overflow:hidden;z-index:6;background:#000;box-shadow:0 10px 35px rgba(0,0,0,.45)}
+  #video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.72}
+  .camera-label{position:absolute;left:9px;bottom:7px;font-size:9px;letter-spacing:.12em;text-transform:uppercase;background:rgba(0,0,0,.38);padding:4px 6px;border-radius:5px}
+  .status{position:fixed;left:22px;bottom:21px;z-index:6;font-size:11px;letter-spacing:.08em;opacity:.62}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#ffcb67;margin-right:7px;box-shadow:0 0 10px #ffcb67}
+  .start{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 45%,rgba(91,57,108,.34),rgba(5,4,12,.96) 70%);transition:opacity .7s}
+  .start.hidden{opacity:0;pointer-events:none}
+  .start-card{width:min(470px,calc(100% - 40px));padding:38px;border:1px solid rgba(255,255,255,.12);border-radius:24px;background:rgba(22,16,31,.66);backdrop-filter:blur(18px);text-align:center;box-shadow:0 30px 100px rgba(0,0,0,.5)}
+  .cake-icon{font-size:54px;filter:drop-shadow(0 0 20px rgba(255,190,90,.4));margin-bottom:10px}
+  .start-card h2{font-family:Georgia,serif;font-weight:400;font-size:32px;margin:0 0 10px}
+  .start-card p{font-size:13px;line-height:1.7;opacity:.62;margin:0 0 24px}
+  button{border:0;border-radius:999px;padding:12px 22px;background:linear-gradient(135deg,#ffb45f,#ff7398);color:white;font-weight:600;letter-spacing:.05em;cursor:pointer;box-shadow:0 8px 30px rgba(255,116,139,.25)}
+  .note{font-size:10px;opacity:.35;margin-top:13px}
+  @media(max-width:600px){.camera{width:145px;height:105px;right:12px;bottom:12px}.status{left:12px;bottom:13px}.hud{top:16px}.hud p{display:none}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="hud">
+  <h1>For Shirley</h1>
+  <p>Open your birthday card with your hand</p>
+</div>
+
+<div class="status"><span class="dot"></span><span id="statusText">Camera ready</span></div>
+
+<div class="camera">
+  <video id="video" autoplay muted playsinline></video>
+  <div class="camera-label">Hand tracking</div>
+</div>
+
+<div class="start" id="start">
+  <div class="start-card">
+    <div class="cake-icon">🎂</div>
+    <h2>A Little Birthday Surprise</h2>
+    <p>Allow camera access, then show an open palm to open the card. Close your hand to gently close it again.</p>
+    <button id="startBtn">Start the surprise</button>
+    <div class="note">Camera access is used only for hand tracking in this page.</div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const app = document.getElementById("app");
+const video = document.getElementById("video");
+const start = document.getElementById("start");
+const startBtn = document.getElementById("startBtn");
+const statusText = document.getElementById("statusText");
+
+let opened = false, targetOpen = 0, celebration = 0;
+let audioCtx = null, audioStarted = false;
+let handBusy = false, lastGesture = 0;
+
+// ---------- Three.js scene ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x080711);
+scene.fog = new THREE.FogExp2(0x080711, 0.055);
+
+const camera = new THREE.PerspectiveCamera(34, innerWidth/innerHeight, .1, 100);
+camera.position.set(0, 0.15, 8.4);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:false});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+app.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = .06;
+controls.enablePan = false;
+controls.minDistance = 6;
+controls.maxDistance = 11;
+controls.target.set(0,0,0);
+controls.maxPolarAngle = Math.PI*.62;
+controls.minPolarAngle = Math.PI*.38;
+
+// Warm cinematic lights
+scene.add(new THREE.AmbientLight(0x7c628b, .42));
+const key = new THREE.PointLight(0xffc46e, 18, 13, 2);
+key.position.set(0, 2.2, 3.4); scene.add(key);
+const rim = new THREE.PointLight(0x9f77ff, 8, 10, 2);
+rim.position.set(-4, .8, -2); scene.add(rim);
+const fill = new THREE.PointLight(0xff6d9e, 5, 8, 2);
+fill.position.set(4,-1,1); scene.add(fill);
+
+// Candle-like glow
+const glow = new THREE.Mesh(
+  new THREE.SphereGeometry(.65, 24, 24),
+  new THREE.MeshBasicMaterial({color:0xffb34e, transparent:true, opacity:.06})
+);
+glow.position.set(0,2.35,1.4); scene.add(glow);
+
+function roundedBox(w,h,d,r,mat){
+  const shape = new THREE.Shape();
+  const x=-w/2,y=-h/2;
+  shape.moveTo(x+r,y); shape.lineTo(x+w-r,y); shape.quadraticCurveTo(x+w,y,x+w,y+r);
+  shape.lineTo(x+w,y+h-r); shape.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  shape.lineTo(x+r,y+h); shape.quadraticCurveTo(x,y+h,x,y+h-r);
+  shape.lineTo(x,y+r); shape.quadraticCurveTo(x,y,x+r,y);
+  const geo = new THREE.ExtrudeGeometry(shape,{depth:d,bevelEnabled:true,bevelSegments:3,bevelSize:r*.45,bevelThickness:r*.45});
+  geo.center();
+  return new THREE.Mesh(geo,mat);
+}
+
+const group = new THREE.Group();
+group.rotation.x = -0.06;
+scene.add(group);
+
+const coverMat = new THREE.MeshStandardMaterial({color:0x8f315e,roughness:.34,metalness:.08});
+const insideMat = new THREE.MeshStandardMaterial({color:0xfff0d8,roughness:.7});
+const goldMat = new THREE.MeshStandardMaterial({color:0xf6c56d,roughness:.25,metalness:.45});
+const pinkMat = new THREE.MeshStandardMaterial({color:0xff6f9d,roughness:.42});
+const purpleMat = new THREE.MeshStandardMaterial({color:0x6e54b4,roughness:.38});
+
+// Base / bottom half
+const bottom = roundedBox(5.8,4.15,.28,.18,insideMat);
+bottom.position.y=-.22; bottom.position.z=.02;
+group.add(bottom);
+
+// Cover front: pivot along upper edge, starts closed
+const coverPivot = new THREE.Group();
+coverPivot.position.set(0,1.84,.20);
+group.add(coverPivot);
+const cover = roundedBox(5.8,4.15,.26,.18,coverMat);
+cover.position.y=-2.075;
+coverPivot.add(cover);
+
+// Inner right/left page
+const inner = roundedBox(5.58,3.92,.10,.14,insideMat);
+inner.position.set(0,-.22,.23);
+group.add(inner);
+
+// Gold frame lines
+function frameLine(w,h){
+  const pts=[
+    new THREE.Vector3(-w/2,-h/2,.16),new THREE.Vector3(w/2,-h/2,.16),
+    new THREE.Vector3(w/2,h/2,.16),new THREE.Vector3(-w/2,h/2,.16),
+    new THREE.Vector3(-w/2,-h/2,.16)
+  ];
+  return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:0xd8a45c,transparent:true,opacity:.7}));
+}
+group.add(frameLine(5.25,3.58));
+
+// Cover cake: colorful cute 3D cake on front
+const cake = new THREE.Group();
+cake.position.set(0,-.1,.39);
+cover.add(cake);
+const frosting = new THREE.MeshStandardMaterial({color:0xff78a5,roughness:.5});
+const cakeBase = new THREE.Mesh(new THREE.CylinderGeometry(1.25,1.38,.62,48), new THREE.MeshStandardMaterial({color:0xf5a8d0,roughness:.55}));
+cakeBase.position.y=.25; cake.add(cakeBase);
+const cakeTop = new THREE.Mesh(new THREE.CylinderGeometry(1.05,1.18,.38,48), new THREE.MeshStandardMaterial({color:0x78d8ff,roughness:.5}));
+cakeTop.position.y=.75; cake.add(cakeTop);
+const cream = new THREE.Mesh(new THREE.TorusGeometry(1.02,.13,12,48), frosting);
+cream.rotation.x=Math.PI/2; cream.position.y=.96; cake.add(cream);
+
+const candleMat = new THREE.MeshStandardMaterial({color:0xffe37b});
+for(let i=-1;i<=1;i++){
+  const c = new THREE.Mesh(new THREE.CylinderGeometry(.055,.055,.55,16),candleMat);
+  c.position.set(i*.38,1.25,0); cake.add(c);
+  const flame = new THREE.Mesh(new THREE.SphereGeometry(.09,12,12),new THREE.MeshBasicMaterial({color:0xffa72f}));
+  flame.scale.set(.7,1.5,.7); flame.position.set(i*.38,1.58,0); cake.add(flame);
+}
+// sprinkles
+const sprinkleColors=[0xffe16b,0x72d9ff,0xb28cff,0xff6b8f];
+for(let i=0;i<18;i++){
+  const a=i*Math.PI*2/18, rr=.8+(.15*Math.sin(i*2.3));
+  const s=new THREE.Mesh(new THREE.BoxGeometry(.07,.035,.12),new THREE.MeshStandardMaterial({color:sprinkleColors[i%4]}));
+  s.position.set(Math.cos(a)*rr, .98, Math.sin(a)*rr); s.rotation.y=a; cake.add(s);
+}
+
+// Inner card text as CanvasTextures (English only)
+function textTexture(lines, opts={}){
+  const c=document.createElement("canvas"); c.width=1024;c.height=650;
+  const x=c.getContext("2d"); x.clearRect(0,0,c.width,c.height);
+  x.textAlign="center"; x.fillStyle=opts.color||"#6d3950";
+  let y=opts.y||170;
+  for(const line of lines){
+    x.font=line.font||"400 54px Georgia"; x.fillText(line.text,c.width/2,y);
+    y+=line.gap||72;
+  }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t;
+}
+const msgTex=textTexture([
+  {text:"Dear Shirley,",font:"400 62px Georgia",gap:84},
+  {text:"Happy Birthday!",font:"600 72px Georgia",gap:105},
+  {text:"May your day be filled with",font:"400 30px Arial",gap:45},
+  {text:"joy, laughter & beautiful moments.",font:"400 30px Arial",gap:62},
+  {text:"Wishing you a wonderful year ahead!",font:"400 28px Arial"}
+]);
+const msgPlane=new THREE.Mesh(
+  new THREE.PlaneGeometry(4.65,2.95),
+  new THREE.MeshBasicMaterial({map:msgTex,transparent:true,side:THREE.DoubleSide,depthTest:true,depthWrite:false})
+);
+msgPlane.position.set(0,.02,.36); group.add(msgPlane);
+
+// little heart decorations
+function heartShape(){
+  const s=new THREE.Shape();
+  s.moveTo(0,-.18); s.bezierCurveTo(-.55,-.55,-.85,.08,-.43,.38);
+  s.bezierCurveTo(-.2,.58,0,.42,0,.22);
+  s.bezierCurveTo(0,.42,.2,.58,.43,.38);
+  s.bezierCurveTo(.85,.08,.55,-.55,0,-.18); return s;
+}
+const heartGeo=new THREE.ExtrudeGeometry(heartShape(),{depth:.08,bevelEnabled:true,bevelSize:.02,bevelThickness:.02});
+heartGeo.center();
+for(const x of [-2.1,2.1]){
+  const h=new THREE.Mesh(heartGeo,new THREE.MeshStandardMaterial({color:x<0?0xff719c:0x7d65d9,roughness:.4}));
+  h.scale.set(.34,.34,.34); h.position.set(x,1.2,.36); group.add(h);
+}
+
+// Ribbon / heart particles
+const particleGroup=new THREE.Group(); scene.add(particleGroup);
+const particles=[];
+const colors=[0xff5e92,0xffcf63,0x7bdcff,0xb68cff,0xff77c8,0x76e3b0];
+for(let i=0;i<70;i++){
+  const mat=new THREE.MeshBasicMaterial({color:colors[i%colors.length],transparent:true,opacity:0});
+  const mesh=new THREE.Mesh(heartGeo,mat);
+  const sc=.045+Math.random()*.06; mesh.scale.set(sc,sc,sc);
+  mesh.position.set(0,-.1,.6); particleGroup.add(mesh);
+  particles.push({mesh, vx:(Math.random()-.5)*.065, vy:.025+Math.random()*.065, vz:(Math.random()-.5)*.045, spin:(Math.random()-.5)*.08, life:0});
+}
+
+// ---------- Hand tracking ----------
+async function setupHands(){
+  const script=document.createElement("script");
+  script.src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
+  await new Promise((resolve,reject)=>{script.onload=resolve;script.onerror=reject;document.head.appendChild(script)});
+  const cameraScript=document.createElement("script");
+  cameraScript.src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
+  await new Promise((resolve,reject)=>{cameraScript.onload=resolve;cameraScript.onerror=reject;document.head.appendChild(cameraScript)});
+
+  const hands=new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+  hands.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:.65,minTrackingConfidence:.55});
+  hands.onResults(results=>{
+    if(!results.multiHandLandmarks?.length){statusText.textContent=opened?"Close your hand to close":"Show an open palm"; return;}
+    const lm=results.multiHandLandmarks[0];
+    const open=isOpenPalm(lm);
+    statusText.textContent=open?(opened?"Card is open":"Open palm detected"):(opened?"Close hand to close":"Hand detected");
+    const now=performance.now();
+    if(now-lastGesture>550){
+      if(open && !opened){ setCard(true); lastGesture=now; }
+      if(!open && opened){ setCard(false); lastGesture=now; }
+    }
+  });
+
+  const cam=new Camera(video,{
+    onFrame:async()=>{await hands.send({image:video})},
+    width:640,height:480
+  });
+  cam.start();
+}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z)}
+function isOpenPalm(l){
+  const wrist=l[0];
+  const fingers=[[8,6],[12,10],[16,14],[20,18]];
+  let extended=0;
+  for(const [tip,pip] of fingers){
+    if(dist(l[tip],wrist)>dist(l[pip],wrist)*1.14) extended++;
+  }
+  // Thumb is useful but not required: four extended fingers is a robust open-palm signal.
+  return extended>=3;
+}
+
+// ---------- Audio: synthesized "Happy Birthday" ----------
+function playBirthday(){
+  if(audioStarted)return;
+  audioStarted=true;
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  const now=audioCtx.currentTime+.08;
+  const tempo=.34;
+  // melody: Happy Birthday, simplified
+  const notes=[262,262,294,262,349,330, 262,262,294,262,392,349, 262,262,523,440,349,330,294, 466,466,440,349,392,349];
+  const times=[0,1,2,3,4,5, 7,8,9,10,11,12, 14,15,16,17,18,19,20, 22,23,24,25,26,28];
+  notes.forEach((f,i)=>{
+    const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+    o.type="sine"; o.frequency.value=f;
+    g.gain.setValueAtTime(0,now+times[i]*tempo);
+    g.gain.linearRampToValueAtTime(.12,now+times[i]*tempo+.025);
+    g.gain.exponentialRampToValueAtTime(.001,now+times[i]*tempo+tempo*.82);
+    o.connect(g).connect(audioCtx.destination); o.start(now+times[i]*tempo); o.stop(now+times[i]*tempo+tempo);
+  });
+}
+
+function setCard(open){
+  opened=open; targetOpen=open?1:0;
+  if(open){celebration=1; playBirthday(); launchConfetti();}
+}
+function launchConfetti(){
+  for(const p of particles){
+    p.mesh.position.set((Math.random()-.5)*.25,-.05,.65);
+    p.vx=(Math.random()-.5)*.12; p.vy=.055+Math.random()*.12; p.vz=(Math.random()-.5)*.07;
+    p.life=1.0; p.mesh.material.opacity=.95;
+  }
+}
+
+// ---------- Interaction / animation ----------
+let last=performance.now();
+function animate(t){
+  requestAnimationFrame(animate);
+  const dt=Math.min((t-last)/1000,.033); last=t;
+  const k=1-Math.pow(.001,dt);
+  // smooth open/close
+  coverPivot.rotation.x += ((targetOpen? -Math.PI*.96 : 0)-coverPivot.rotation.x)*k*.9;
+  celebration += ((opened?1:0)-celebration)*k*.8;
+
+  key.intensity=16+Math.sin(t*.004)*2.5+Math.sin(t*.013)*.8;
+  glow.scale.setScalar(.9+Math.sin(t*.007)*.12);
+  glow.material.opacity=.045+Math.sin(t*.007)*.012;
+
+  for(const p of particles){
+    if(p.life>0){
+      p.life-=dt*.48;
+      p.mesh.position.x+=p.vx;
+      p.mesh.position.y+=p.vy;
+      p.mesh.position.z+=p.vz;
+      p.vy-=dt*.035;
+      p.mesh.rotation.z+=p.spin;
+      p.mesh.material.opacity=Math.max(0,p.life);
+    }
+  }
+  controls.update();
+  renderer.render(scene,camera);
+}
+animate(performance.now());
+
+addEventListener("resize",()=>{
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+startBtn.onclick=async()=>{
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});
+    video.srcObject=stream; await video.play();
+    // unlock audio from a real user gesture
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    await audioCtx.resume(); audioCtx.suspend(); audioCtx=null; audioStarted=false;
+    start.classList.add("hidden");
+    statusText.textContent="Show an open palm";
+    setupHands();
+  }catch(e){
+    statusText.textContent="Camera permission needed";
+    alert("Please allow camera access to use hand tracking.");
+  }
+};
+</script>
+</body>
+</html>
